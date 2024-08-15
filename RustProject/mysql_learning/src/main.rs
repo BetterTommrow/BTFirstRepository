@@ -2,7 +2,7 @@ use mysql::prelude::*;
 use mysql::*;
 
 fn main() {
-    let dsn: &str = "mysql://tests:fNsKpFTFhC4TWJ5P@43.229.212.82:3306/tests";
+    let dsn: &str = "";
     let pool: Pool = Pool::new(dsn).unwrap();
     let mut conn = pool.get_conn().unwrap();
     let ret: Option<String> = conn
