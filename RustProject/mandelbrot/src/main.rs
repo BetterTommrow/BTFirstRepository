@@ -6,8 +6,13 @@ use image::png::PNGEncoder;
 use std::fs::File;
 
 use std::env;
+use num_cpus;
 
 fn main() {
+    // 获取自己电脑的核心数
+    let available_cores = num_cpus::get();
+    println!("Available cores: {}", available_cores);
+
     let args: Vec<String> = env::args().collect();
     if args.len() != 5 {
         eprint!("Usage: {} File pixels Upper_left Lower_right", args[0]);
@@ -19,12 +24,12 @@ fn main() {
         .expect("error parsing image dimensions");
     let upper_left = parse_complex(&args[3])
         .expect("error parsing upper left corner point");
-    let lowert_right = parse_complex(&args[4])
+    let lower_right = parse_complex(&args[4])
         .expect("error parsing lower right corner point");
 
     let mut pixels = vec![0; bounds.0 * bounds.1];
 
-    render(&mut pixels, bounds, upper_left, lowert_right);
+    render(&mut pixels, bounds, upper_left, lower_right);
 
     write_image(&args[1], &pixels, bounds).expect("error writing PNG file");
 }
@@ -43,20 +48,41 @@ fn render(
     pixels: &mut [u8],
     bounds: (usize, usize),
     upper_left: Complex<f64>,
-    lowert_right: Complex<f64>
+    lower_right: Complex<f64>
 ) {
-    assert!(pixels.len() == bounds.0 * bounds.1);
+    let threads = 8;
+    let rows_per_band = bounds.1 / threads + 1;
 
-    for row in 0..bounds.1 {
-        for col in 0..bounds.0 {
-            let point = pixel_to_point(bounds, (col, row), upper_left, lowert_right);
-            pixels[row * bounds.0 + col] = match escape_time(point, 255) {
-                None => 0,
-                Some(count) => 255 - count as u8,
-            };
-        }
+    {
+        let bands: Vec<&mut [u8]> =
+            pixels.chunks_mut(rows_per_band * bounds.0).collect();
+        crossbeam::scope(|spawner| {
+            for (i, band) in bands.into_iter().enumerate() {
+                let top = rows_per_band * i;
+                let height = band.len() / bounds.0;  // 每个 band 的高度应该是 rows_per_band
+                let band_bounds = (bounds.0, height);
+                let band_upper_left =
+                    pixel_to_point(bounds, (0, top), upper_left, lower_right);
+                let band_lower_right =
+                    pixel_to_point(bounds, (bounds.0, top + height), upper_left, lower_right);
+
+                spawner.spawn(move |_| {
+                    for row in 0..height {
+                        for col in 0..bounds.0 {
+                            let point = pixel_to_point(band_bounds, (col, row), band_upper_left, band_lower_right);
+                            band[row * bounds.0 + col] = match escape_time(point, 255) {
+                                None => 0,
+                                Some(count) => 255 - count as u8,
+                            };
+                        }
+                    }
+                });
+            }
+        }).unwrap();
     }
 }
+
+
 
 fn escape_time(c: Complex<f64>, limit: usize) -> Option<usize> {
     let mut z = Complex { re: 0., im: 0. };
